@@ -1,0 +1,50 @@
+name: Publish firmware download page
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Refuse publishing broken firmware download links
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re, urllib.request
+          urls=set()
+          for file in Path('docs').rglob('*.md'):
+              urls.update(re.findall(r'https://github\.com/[^\s)]+/releases/download/[^\s)]+',file.read_text()))
+          if not urls:
+              raise SystemExit('No versioned release downloads in device pages')
+          for url in sorted(urls):
+              request=urllib.request.Request(url,method='HEAD')
+              with urllib.request.urlopen(request,timeout=30) as response:
+                  assert response.status==200, (url,response.status)
+              print('Download available:',url)
+          PY
+      - uses: actions/configure-pages@v5
+      - uses: actions/jekyll-build-pages@v1
+        with:
+          source: ./docs
+          destination: ./_site
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./_site
+      - id: deploy
+        uses: actions/deploy-pages@v4
