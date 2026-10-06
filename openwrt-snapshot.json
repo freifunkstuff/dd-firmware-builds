@@ -7,5 +7,6 @@
   "firmware_utils_commit_sha": "09f879302fd08c775d64b5714652469795424b25",
   "host_firmware_utils_base_sha": "c9da48613b5d7b892d5a3871dc6332487360de4a",
   "luci_feed_commit_sha": "0257cc05ad4184eb13b62edaf946028b6db94cf6",
+  "packages_feed_commit_sha": "24d2074662472662eb3a540b535b0cab8f7d7460",
   "version_kind": "SNAPSHOT"
 }

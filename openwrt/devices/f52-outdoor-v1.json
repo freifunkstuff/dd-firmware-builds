@@ -13,6 +13,7 @@
     "lib/modules/*/ath10k_pci.ko",
     "lib/firmware/ath10k/QCA9888/hw2.0/firmware-5.bin",
     "usr/sbin/uhttpd",
+    "usr/libexec/cgi-io",
     "www/index.html",
     "etc/config/network",
     "etc/config/dhcp"

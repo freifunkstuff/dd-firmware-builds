@@ -66,7 +66,7 @@ jobs:
           set -euo pipefail
           label=$(python3 scripts/prepare_openwrt.py source)
           echo "label=$label" >> "$GITHUB_OUTPUT"
-          (cd source && ./scripts/feeds update luci && ./scripts/feeds install -a -p luci) \
+          (cd source && ./scripts/feeds update packages luci && ./scripts/feeds install -p packages cgi-io && ./scripts/feeds install -a -p luci) \
             > /tmp/f52-luci-feed.log 2>&1 || {
             tail -n 100 /tmp/f52-luci-feed.log
             exit 1
@@ -74,10 +74,12 @@ jobs:
           python3 - <<'PY'
           import json, subprocess
           from pathlib import Path
-          pinned=json.loads(Path('openwrt-snapshot.json').read_text())['luci_feed_commit_sha']
-          actual=subprocess.check_output(['git','-C','source/feeds/luci','rev-parse','HEAD'],text=True).strip()
-          assert actual==pinned, 'LuCI feed revision does not match reviewed SHA'
-          print('LuCI feed pinned and installed:',actual)
+          lock=json.loads(Path('openwrt-snapshot.json').read_text())
+          for feed in ('luci','packages'):
+              pinned=lock[f'{feed}_feed_commit_sha']
+              actual=subprocess.check_output(['git','-C',f'source/feeds/{feed}','rev-parse','HEAD'],text=True).strip()
+              assert actual==pinned, f'{feed} feed revision does not match reviewed SHA'
+              print('Feed pinned and installed:',feed,actual)
           PY
           make -C source defconfig > /tmp/f52-defconfig.log 2>&1 || {
             tail -n 100 /tmp/f52-defconfig.log
@@ -92,7 +94,8 @@ jobs:
                   'CONFIG_PACKAGE_ath10k-firmware-qca9888-ct=y',
                   'CONFIG_PACKAGE_luci-ssl=y',
                   'CONFIG_PACKAGE_uhttpd=y',
-                  'CONFIG_PACKAGE_rpcd=y')
+                  'CONFIG_PACKAGE_rpcd=y',
+                  'CONFIG_PACKAGE_cgi-io=y')
           assert all(v in x for v in wanted), 'F52, CT/QCA9888 or LuCI SSL dependencies missing'
           assert '# CONFIG_TARGET_ROOTFS_INITRAMFS is not set' in x
           PY

@@ -40,11 +40,14 @@ def main() -> None:
     shutil.copyfile(REPO / 'patches/openwrt/100-f52-safeloader-c9da.patch',
                     tool_patches / '100-f52-safeloader-c9da.patch')
     upstream_feeds = (source / 'feeds.conf.default').read_text()
-    luci = 'src-git luci https://git.openwrt.org/project/luci.git'
-    if upstream_feeds.count(luci) != 1:
-        raise ValueError('OpenWrt LuCI feed declaration changed; review pinning')
-    (source / 'feeds.conf').write_text(upstream_feeds.replace(
-        luci, luci + '^' + lock['luci_feed_commit_sha']))
+    for name, url in (('luci', 'https://git.openwrt.org/project/luci.git'),
+                      ('packages', 'https://git.openwrt.org/feed/packages.git')):
+        declaration = f'src-git {name} {url}'
+        if upstream_feeds.count(declaration) != 1:
+            raise ValueError(f'OpenWrt {name} feed declaration changed; review pinning')
+        upstream_feeds = upstream_feeds.replace(
+            declaration, declaration + '^' + lock[f'{name}_feed_commit_sha'])
+    (source / 'feeds.conf').write_text(upstream_feeds)
     shutil.copytree(REPO / 'openwrt/files', source / 'files', dirs_exist_ok=True)
     config = (REPO / 'openwrt/f52.config').read_text()
     (source / '.config').write_text(config)
@@ -53,7 +56,8 @@ def main() -> None:
     label = f"openwrt-snapshot-{head[:8]}-{device['id']}-r{device['revision']}"
     marker.write_text(f'version={label}\nopenwrt_commit={head}\n'
                       f'firmware_utils_pr_commit={lock["firmware_utils_commit_sha"]}\n'
-                      f'luci_feed_commit={lock["luci_feed_commit_sha"]}\n')
+                      f'luci_feed_commit={lock["luci_feed_commit_sha"]}\n'
+                      f'packages_feed_commit={lock["packages_feed_commit_sha"]}\n')
     print(label)
 
 

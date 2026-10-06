@@ -187,8 +187,9 @@ def verify(source: Path, out: Path) -> dict:
         expected_label = f"openwrt-snapshot-{lock['commit_sha'][:8]}-{device['id']}-r{device['revision']}"
         expected_marker = {f'version={expected_label}', f'openwrt_commit={lock["commit_sha"]}',
                            f'firmware_utils_pr_commit={lock["firmware_utils_commit_sha"]}',
-                           f'luci_feed_commit={lock["luci_feed_commit_sha"]}'}
-        if set(marker.splitlines()) != expected_marker or len(marker.splitlines()) != 4:
+                           f'luci_feed_commit={lock["luci_feed_commit_sha"]}',
+                           f'packages_feed_commit={lock["packages_feed_commit_sha"]}'}
+        if set(marker.splitlines()) != expected_marker or len(marker.splitlines()) != 5:
             raise ValueError('image build revision, feed or pinned PR provenance marker differs')
         check_ap_network(
             run('unsquashfs', '-cat', str(root), 'etc/config/network'),
@@ -228,6 +229,7 @@ def verify(source: Path, out: Path) -> dict:
               'openwrt_pr': lock['pull_request'], 'firmware_utils_pr': lock['firmware_utils_pull_request'],
               'firmware_utils_commit': lock['firmware_utils_commit_sha'],
               'luci_feed_commit': lock['luci_feed_commit_sha'],
+              'packages_feed_commit': lock['packages_feed_commit_sha'],
               'lan_mode': 'dhcp-client-only; no DHCPv4/DHCPv6/RA server; LuCI SSL',
               'device_revision': device['revision'], 'factory_support_list': device['factory_support_list'],
               'squashfs_used_bytes': used, 'firmware_region_start': start, 'firmware_region_end': end,
