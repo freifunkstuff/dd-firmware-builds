@@ -46,6 +46,12 @@ jobs:
             git add upstream.json
             git commit -m "Propose reviewed FFDD $tag update"
             git push origin "HEAD:refs/heads/$branch"
+          else
+            git fetch --quiet --no-tags origin "refs/heads/$branch:refs/remotes/origin/$branch"
+            if ! cmp -s upstream.json <(git show "refs/remotes/origin/$branch:upstream.json"); then
+              echo "Existing $branch does NOT contain the newly verified FFDD tag SHA; manual review required." >&2
+              exit 1
+            fi
           fi
           title="Review FFDD $tag update"
           existing=$(gh issue list --state all --search "$title in:title" --json number,title \

@@ -13,6 +13,7 @@ import lzma
 from pathlib import Path
 import re
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
@@ -36,6 +37,48 @@ def parse_partitions(text: str, title: str) -> dict[str, tuple[int, int]]:
     if not result:
         raise ValueError(f'no partitions parsed from safeloader section {title}')
     return result
+
+
+def parse_build_marker(text: str) -> dict[str, str]:
+    """A lab artifact's provenance must be unambiguous and COMPLETE."""
+    result = {}
+    for line in text.splitlines():
+        key, sep, value = line.partition('=')
+        if not sep or not re.fullmatch(r'[a-z_]+', key) or key in result:
+            raise ValueError('invalid or duplicate /etc/dd-device-build key')
+        result[key] = value
+    expected_keys = {'ffdd_version', 'device', 'device_revision', 'display_version', 'ffdd_commit'}
+    if set(result) != expected_keys:
+        raise ValueError('missing or unexpected /etc/dd-device-build keys')
+    return result
+
+
+def check_public_credentials(text: str) -> None:
+    """Check exact, unique UCI values; substring matching would leak keys."""
+    mesh = re.findall(r"^\s*option\s+wifi_mesh_key\s+'([^']*)'\s*$", text, re.M)
+    registration = re.findall(r"^\s*option\s+register_service_url\s+'([^']*)'\s*$", text, re.M)
+    expected_url = 'https://selfsigned.register.freifunk-dresden.de/bot.php?registerkey='
+    if mesh != ['custom-firmware-key'] or registration != [expected_url]:
+        raise ValueError('unreviewed, duplicate or real DD credentials: REFUSE public artifact upload')
+
+
+def check_consistent_images(kernel: bytes, factory_root: bytes, upgrade: bytes) -> int:
+    """Check both flashable outputs carry byte-identical SquashFS data."""
+    if len(factory_root) < 100 or factory_root[:4] != b'hsqs':
+        raise ValueError('factory image lacks valid SquashFS magic/superblock')
+    if factory_root[-4:] != b'\xde\xad\xc0\xde':
+        raise ValueError('missing factory-only JFFS2 EOF marker')
+    squashfs_used = struct.unpack_from('<Q', factory_root, 40)[0]
+    if not 96 <= squashfs_used <= len(factory_root) - 4:
+        raise ValueError('invalid SquashFS bytes_used in factory payload')
+    if upgrade[:len(kernel)] != kernel:
+        raise ValueError('factory and sysupgrade contain DIFFERENT MIPS kernels')
+    upgrade_root = upgrade[len(kernel):]
+    if len(upgrade_root) < squashfs_used or upgrade_root[:4] != b'hsqs':
+        raise ValueError('sysupgrade contains no valid SquashFS at the expected position')
+    if upgrade_root[:squashfs_used] != factory_root[:squashfs_used]:
+        raise ValueError('factory and sysupgrade contain DIFFERENT SquashFS data or credentials')
+    return squashfs_used
 
 
 def get_release_file(root: Path, device: dict, kind: str) -> Path:
@@ -102,6 +145,10 @@ def verify(source: Path, device: dict, lock: dict, out: Path) -> dict:
             raise ValueError('wrong device tree compatible within decompressed kernel')
         if rootfs.stat().st_size != contents['file-system'][1]:
             raise ValueError('extracted filesystem differs from factory payload length')
+        factory_root = rootfs.read_bytes()
+        # Safeloader sysupgrade is kernel || squashfs || padding || fwtool metadata.
+        # Factory has different framing plus a factory-only DEADC0DE marker.
+        squashfs_used = check_consistent_images(kernel, factory_root, upgrade.read_bytes())
         listings = run('unsquashfs', '-ls', str(rootfs)).splitlines()
         names = [item.removeprefix('squashfs-root/') for item in listings]
         for required in device['required_rootfs_paths']:
@@ -111,12 +158,16 @@ def verify(source: Path, device: dict, lock: dict, out: Path) -> dict:
         marker = run('unsquashfs', '-cat', str(rootfs), 'etc/dd-device-build')
         credentials = run('unsquashfs', '-cat', str(rootfs), 'etc/config/credentials')
         expected_label = f"{lock['version']}-{device['id']}-r{device['revision']}"
-        if version != lock['version'] or f'display_version={expected_label}' not in marker:
-            raise ValueError('numeric DD version or independent device revision marker changed')
-        # Public CI must never accidentally publish real mesh/registration secrets.
-        if ("option wifi_mesh_key 'custom-firmware-key'" not in credentials
-                or "registerkey='" not in credentials):
-            raise ValueError('unexpected non-default credentials; REFUSE public artifact upload')
+        expected_marker = {
+            'ffdd_version': lock['version'],
+            'device': device['id'],
+            'device_revision': f"r{device['revision']}",
+            'display_version': expected_label,
+            'ffdd_commit': lock['commit_sha'],
+        }
+        if version != lock['version'] or parse_build_marker(marker) != expected_marker:
+            raise ValueError('DD version or device ID/revision/source commit in rootfs differs from reviewed lock')
+        check_public_credentials(credentials)
         metadata = temp / 'upgrade.json'
         run(str(fwtool), '-i', str(metadata), str(upgrade))
         info = json.loads(metadata.read_text())
@@ -137,7 +188,8 @@ def verify(source: Path, device: dict, lock: dict, out: Path) -> dict:
     report = {
         'label': label, 'status': 'UNTESTED-LAB-ONLY', 'official_dd_release': lock['version'],
         'device_revision': device['revision'], 'device': device['id'],
-        'dd_tag': lock['tag'], 'dd_commit': lock['commit_sha'],
+        'dd_tag': lock['tag'], 'dd_tag_object_sha': lock['tag_object_sha'],
+        'dd_commit': lock['commit_sha'],
         'config': 'public CI placeholders; not registered with Dresden network',
         'factory_support_list': device['factory_support_list'],
         'factory_compat_level': device['factory_compat_level'],
@@ -145,6 +197,7 @@ def verify(source: Path, device: dict, lock: dict, out: Path) -> dict:
         'factory_payload': {
             'kernel_base': k_start, 'kernel_bytes': contents['os-image'][1],
             'filesystem_base': r_start, 'filesystem_bytes': contents['file-system'][1],
+            'squashfs_used_bytes': squashfs_used,
             'available_bytes_after_rootfs': firmware_end - r_start - contents['file-system'][1],
         },
         'files': files,
