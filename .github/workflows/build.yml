@@ -127,6 +127,7 @@ jobs:
           df -h .
 
       - name: Verify factory, sysupgrade, filesystem, firmware and provenance
+        id: verify
         shell: bash
         env:
           DEVICE: ${{ matrix.device }}
@@ -136,11 +137,18 @@ jobs:
           set -euo pipefail
           python3 scripts/verify_images.py --source source --device "$DEVICE" --out dist/"$DEVICE"
           (cd dist/"$DEVICE" && sha256sum -c SHA256SUMS)
+          label=$(python3 - "$DEVICE" <<'PY'
+          import json,sys
+          from pathlib import Path
+          print(json.loads((Path('dist')/sys.argv[1]/'build-summary.json').read_text())['label'])
+          PY
+          )
+          echo "label=$label" >> "$GITHUB_OUTPUT"
 
       - name: Upload UNTESTED lab images, not a GitHub Release
         uses: actions/upload-artifact@v4
         with:
-          name: UNTESTED-dd-${{ matrix.device }}-${{ github.run_number }}
+          name: UNTESTED-${{ steps.verify.outputs.label }}
           path: dist/${{ matrix.device }}/
           if-no-files-found: error
           retention-days: 14
