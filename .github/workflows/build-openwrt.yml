@@ -1,0 +1,118 @@
+name: Build experimental OpenWrt F52 SNAPSHOT
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  f52:
+    runs-on: ${{ vars.FFDD_RUNNER || 'ubuntu-24.04' }}
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Ensure sufficient hosted build disk
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ runner.environment }}" = github-hosted ]; then
+            sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup
+            docker image prune -af || true
+          fi
+          df -h .
+          available_kib=$(df -Pk . | awk 'END {print $4}')
+          if (( available_kib < 20 * 1024 * 1024 )); then
+            echo 'Need >=20 GiB free; use a larger or self-hosted runner via FFDD_RUNNER.' >&2
+            exit 1
+          fi
+
+      - name: Install OpenWrt host dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            build-essential gcc-multilib clang cmake file git gawk flex bison gettext \
+            libncurses-dev libssl-dev zlib1g-dev libelf-dev libcap-dev libusb-1.0-0-dev \
+            unzip zip rsync jq patch python3 python3-setuptools python3-pyelftools \
+            squashfs-tools bc swig time wget curl lzop zstd subversion pkgconf
+
+      - name: Fetch FULL OpenWrt history and reviewed F52 PR head
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --filter=blob:none --no-checkout --single-branch \
+            https://github.com/openwrt/openwrt.git source
+          git -C source fetch --filter=blob:none origin refs/pull/24903/head
+          python3 - <<'PY'
+          import json,subprocess
+          from pathlib import Path
+          x=json.loads(Path('openwrt-snapshot.json').read_text())
+          fetched=subprocess.check_output(['git','-C','source','rev-parse','FETCH_HEAD'],text=True).strip()
+          assert fetched == x['commit_sha'], 'PR head changed; update SHA only after review'
+          PY
+          pinned=$(python3 -c 'import json;print(json.load(open("openwrt-snapshot.json"))["commit_sha"])')
+          git -C source checkout --detach "$pinned"
+          test "$(git -C source rev-parse --is-shallow-repository)" = false
+
+      - name: Configure persistent F52 image and pinned safeloader board
+        id: prepare
+        shell: bash
+        run: |
+          set -euo pipefail
+          label=$(python3 scripts/prepare_openwrt.py source)
+          echo "label=$label" >> "$GITHUB_OUTPUT"
+          make -C source defconfig > /tmp/f52-defconfig.log 2>&1 || {
+            tail -n 100 /tmp/f52-defconfig.log
+            exit 1
+          }
+          python3 - <<'PY'
+          from pathlib import Path
+          x=(Path('source')/'.config').read_text().splitlines()
+          wanted=('CONFIG_TARGET_ath79_generic_DEVICE_tplink_f52-outdoor-v1=y',
+                  'CONFIG_TARGET_ROOTFS_SQUASHFS=y',
+                  'CONFIG_PACKAGE_kmod-ath10k-ct=y',
+                  'CONFIG_PACKAGE_ath10k-firmware-qca9888-ct=y')
+          assert all(v in x for v in wanted), 'F52 device or 5-GHz CT/QCA9888 package lost'
+          assert '# CONFIG_TARGET_ROOTFS_INITRAMFS is not set' in x
+          PY
+
+      - name: Compile OpenWrt SNAPSHOT for F52 only
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd source && make -j2 V=s) > build-openwrt.log 2>&1 || {
+            tail -n 120 build-openwrt.log
+            exit 1
+          }
+          df -h .
+
+      - name: Validate actual F52 factory, sysupgrade and source revision
+        id: verify
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/verify_openwrt_images.py source dist/openwrt-f52
+          (cd dist/openwrt-f52 && sha256sum -c SHA256SUMS)
+          echo "label=${{ steps.prepare.outputs.label }}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload UNTESTED OpenWrt images, never publish a GitHub Release
+        uses: actions/upload-artifact@v4
+        with:
+          name: UNTESTED-${{ steps.verify.outputs.label }}
+          path: dist/openwrt-f52/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload OpenWrt diagnostic build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: openwrt-f52-build-log-${{ github.run_number }}
+          path: build-openwrt.log
+          if-no-files-found: ignore
+          retention-days: 3

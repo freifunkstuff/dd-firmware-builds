@@ -1,0 +1,16 @@
+{
+  "id": "f52-outdoor-v1",
+  "revision": 1,
+  "openwrt_device": "tplink_f52-outdoor-v1",
+  "compatible": "tplink,f52-outdoor-v1",
+  "image_format": "tplink-safeloader",
+  "factory_support_list": "Festa F52-Outdoor(TP-Link|UN|AC1200-D):1.0",
+  "factory_compat_level": 2,
+  "firmware_start": 262144,
+  "firmware_end": 14417920,
+  "required_rootfs_paths": [
+    "lib/modules/*/ath10k_core.ko",
+    "lib/modules/*/ath10k_pci.ko",
+    "lib/firmware/ath10k/QCA9888/hw2.0/firmware-5.bin"
+  ]
+}

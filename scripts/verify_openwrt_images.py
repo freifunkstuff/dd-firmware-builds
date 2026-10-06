@@ -1,0 +1,143 @@
+#!/usr/bin/env python3
+"""Check PR-based OpenWrt F52 Factory/Sysupgrade without booting or flashing."""
+
+import fnmatch
+import hashlib
+import json
+import lzma
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+
+from verify_images import check_consistent_images, parse_partitions
+
+REPO = Path(__file__).resolve().parents[1]
+
+
+def run(*args: str) -> str:
+    return subprocess.check_output(args, text=True, stderr=subprocess.PIPE)
+
+
+def verify(source: Path, out: Path) -> dict:
+    lock = json.loads((REPO / 'openwrt-snapshot.json').read_text())
+    device = json.loads((REPO / 'openwrt/devices/f52-outdoor-v1.json').read_text())
+    if out.exists() and list(out.iterdir()):
+        raise ValueError('output directory must be empty')
+    if run('git', '-C', str(source), 'rev-parse', 'HEAD').strip() != lock['commit_sha']:
+        raise ValueError('OpenWrt PR source revision does not match reviewed SHA')
+    platform = 'ath79/generic'
+    images = source / 'bin/targets' / platform
+    prefix = f"*{device['openwrt_device']}-squashfs-"
+    def only(kind: str) -> Path:
+        files = list(images.glob(prefix + kind + '.bin'))
+        if len(files) != 1:
+            raise ValueError(f'expected exactly one {kind} F52 image, found {files}')
+        return files[0]
+    factory, upgrade = only('factory'), only('sysupgrade')
+    if list(images.glob('*f52-outdoor-v1*initramfs*')):
+        raise ValueError('unexpected RAM-only image in persistent factory build')
+    host = source / 'staging_dir/host/bin'
+    safeloader, fwtool = host / 'tplink-safeloader', host / 'fwtool'
+    info = run(str(safeloader), '-i', str(factory))
+    if info.count(device['factory_support_list']) != 1:
+        raise ValueError('factory has wrong or ambiguous Festa F52 SupportList')
+    if f"Compatibility level: {device['factory_compat_level']}" not in info:
+        raise ValueError('factory firmware compatibility level differs')
+    payload = parse_partitions(info, 'Firmware image partitions:')
+    layout = parse_partitions(info, '[Partition table]')
+    if set(payload) != {'partition-table', 'soft-version', 'support-list', 'os-image', 'file-system'}:
+        raise ValueError('unexpected factory payload partitions')
+    start, end = device['firmware_start'], device['firmware_end']
+    kernel_base, kernel_space = layout['os-image']
+    root_base, root_space = layout['file-system']
+    if not (kernel_base == start < kernel_base + payload['os-image'][1] <= root_base
+            and root_base + payload['file-system'][1] <= root_base + root_space <= end):
+        raise ValueError('factory kernel/filesystem do not fit protected F52 firmware region')
+    if layout['fs-uboot'][0] != 0 or layout['radio'][0] < end:
+        raise ValueError('bootloader or calibration layout changed')
+
+    with tempfile.TemporaryDirectory(prefix='openwrt-f52-image-check-') as d:
+        temp = Path(d)
+        run(str(safeloader), '-x', str(factory), '-d', d)
+        kernel = (temp / 'os-image').read_bytes()
+        rootfs = (temp / 'file-system').read_bytes()
+        if kernel[:4] != b'\x7fELF' or rootfs[:4] != b'hsqs':
+            raise ValueError('factory does not contain ELF kernel plus SquashFS')
+        used = check_consistent_images(kernel, rootfs, upgrade.read_bytes())
+        header = next((kernel.find(x, 0, 65536) for x in
+                       (b'\x6d\x00\x00\x80\x00', b'\x5d\x00\x00\x80\x00')
+                       if kernel.find(x, 0, 65536) > 0), None)
+        if header is None:
+            raise ValueError('missing ath79 LZMA kernel in ELF payload')
+        decoder = lzma.LZMADecompressor(format=lzma.FORMAT_ALONE)
+        plain = decoder.decompress(kernel[header:])
+        if not decoder.eof or device['compatible'].encode() not in plain:
+            raise ValueError('kernel lacks F52 device-tree compatible')
+        root = temp / 'file-system'
+        names = [s.removeprefix('squashfs-root/') for s in run('unsquashfs', '-ls', str(root)).splitlines()]
+        for required in device['required_rootfs_paths']:
+            if not any(fnmatch.fnmatchcase(name, required) for name in names):
+                raise ValueError(f'F52 radio component not in actual rootfs: {required}')
+        release = run('unsquashfs', '-cat', str(root), 'etc/openwrt_release')
+        if not re.search(r"^DISTRIB_RELEASE='SNAPSHOT'$", release, re.M):
+            raise ValueError('not labelled OpenWrt SNAPSHOT in /etc/openwrt_release')
+        rev = re.search(r"^DISTRIB_REVISION='([^']+)'$", release, re.M)
+        if not rev:
+            raise ValueError('missing OpenWrt revision')
+        marker = run('unsquashfs', '-cat', str(root), 'etc/device-build')
+        expected_label = f"openwrt-snapshot-{lock['commit_sha'][:8]}-{device['id']}-r{device['revision']}"
+        expected_marker = {f'version={expected_label}', f'openwrt_commit={lock["commit_sha"]}',
+                           f'firmware_utils_pr_commit={lock["firmware_utils_commit_sha"]}'}
+        if set(marker.splitlines()) != expected_marker or len(marker.splitlines()) != 3:
+            raise ValueError('image build revision or pinned PR provenance marker differs')
+        metadata = temp / 'upgrade.json'
+        run(str(fwtool), '-i', str(metadata), str(upgrade))
+        upgrade_info = json.loads(metadata.read_text())
+        if upgrade_info.get('supported_devices') != [device['compatible']]:
+            raise ValueError('OpenWrt sysupgrade advertises wrong model')
+
+    profiles = json.loads((images / 'profiles.json').read_text())
+    p = profiles.get('profiles', {}).get(device['openwrt_device'])
+    if not p or device['compatible'] not in p.get('supported_devices', []):
+        raise ValueError('F52 image profile/supported_devices absent')
+    required = {'kmod-ath10k-ct', 'ath10k-firmware-qca9888-ct'}
+    if not required.issubset(set(p.get('device_packages', []))):
+        raise ValueError('OpenWrt F52 DevicePackages do not include CT/QCA9888 firmware')
+    by_type = {row['type']: row for row in p.get('images', [])}
+    if set(by_type) != {'factory', 'sysupgrade'}:
+        raise ValueError('unexpected F52 image types in profiles.json')
+    for kind, file in (('factory', factory), ('sysupgrade', upgrade)):
+        if by_type[kind]['sha256'] != hashlib.sha256(file.read_bytes()).hexdigest():
+            raise ValueError(f'profiles.json {kind} hash does not match actual image')
+
+    out.mkdir(parents=True, exist_ok=True)
+    label = f"openwrt-snapshot-{lock['commit_sha'][:8]}-{device['id']}-r{device['revision']}"
+    files = {}
+    for kind, source_image in (('factory', factory), ('sysupgrade', upgrade)):
+        dest = out / f'{label}-{kind}.bin'
+        shutil.copyfile(source_image, dest)
+        files[kind] = {'name': dest.name, 'bytes': dest.stat().st_size,
+                       'sha256': hashlib.sha256(dest.read_bytes()).hexdigest()}
+    report = {'label': label, 'status': 'UNTESTED-NO-FLASH', 'base': 'OpenWrt SNAPSHOT',
+              'openwrt_revision': rev.group(1), 'openwrt_commit': lock['commit_sha'],
+              'openwrt_pr': lock['pull_request'], 'firmware_utils_pr': lock['firmware_utils_pull_request'],
+              'firmware_utils_commit': lock['firmware_utils_commit_sha'],
+              'device_revision': device['revision'], 'factory_support_list': device['factory_support_list'],
+              'squashfs_used_bytes': used, 'firmware_region_start': start, 'firmware_region_end': end,
+              'files': files}
+    (out / 'build-summary.json').write_text(json.dumps(report, indent=2) + '\n')
+    (out / 'SHA256SUMS').write_text(''.join(f'{x["sha256"]}  {x["name"]}\n' for x in files.values()))
+    return report
+
+
+if __name__ == '__main__':
+    try:
+        if len(sys.argv) != 3:
+            raise ValueError('usage: verify_openwrt_images.py OPENWRT_SOURCE OUTPUT_DIR')
+        print(json.dumps(verify(Path(sys.argv[1]).resolve(), Path(sys.argv[2]).resolve()), indent=2))
+    except (ValueError, OSError, subprocess.CalledProcessError, json.JSONDecodeError) as error:
+        print(f'OpenWrt F52 image verification failed: {error}', file=sys.stderr)
+        raise SystemExit(1)
