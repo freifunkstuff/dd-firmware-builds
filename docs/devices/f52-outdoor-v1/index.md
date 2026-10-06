@@ -23,10 +23,25 @@ OpenWrt SNAPSHOT mit F52-Unterstützung, **LuCI über HTTPS** und Ethernet als *
 
 1. Passendes **Factory-Image** herunterladen und SHA-256 prüfen.
 2. Unter **Management → SSH Server** SSH aktivieren.
-3. Per SSH anmelden und die Signaturprüfung ausschalten:
+3. Per SSH anmelden (`<IP-Adresse>` durch die Adresse des F52 ersetzen):
+
+   ```sh
+   ssh -o HostKeyAlgorithms=+ssh-rsa \
+       -o PubkeyAcceptedAlgorithms=+ssh-rsa \
+       admin@<IP-Adresse>
+   ```
+
+   In der SSH-Sitzung die Signaturprüfung ausschalten:
 
    ```sh
    cliclientd stopcs
+   ```
+
+   Die Ausgabe `Success` bestätigt den Befehl:
+
+   ```text
+   /bin $ cliclientd stopcs
+   /bin $ Success
    ```
 
 4. Ohne vorherigen Neustart unter **System → Firmware Update** das **F52-Factory-Image** hochladen. Während des Updates die Stromversorgung nicht unterbrechen.
