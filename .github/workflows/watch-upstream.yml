@@ -1,0 +1,59 @@
+name: Suggest reviewed FFDD release updates
+
+on:
+  schedule:
+    - cron: '17 4 * * 1'
+  workflow_dispatch:
+
+concurrency:
+  group: ffdd-upstream-watch
+  cancel-in-progress: false
+
+# freifunkstuff organization policy forbids GITHUB_TOKEN-created PRs.
+# Leave an Issue with a ready-to-open compare link; a human creates the PR.
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  suggest:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - name: Check current official GitLab tags (never lagging GitHub mirror)
+        run: python3 scripts/update_upstream.py --write
+      - name: Push PR-ready review branch and notify maintainers
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- upstream.json; then
+            echo 'Already pinned to newest stable official FFDD tag.'
+            exit 0
+          fi
+          version=$(python3 -c 'import json; print(json.load(open("upstream.json"))["version"])')
+          tag=$(python3 -c 'import json; print(json.load(open("upstream.json"))["tag"])')
+          branch="automation/ffdd-$version"
+          if [ -z "$(git ls-remote --heads origin "refs/heads/$branch")" ]; then
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git switch -c "$branch"
+            git add upstream.json
+            git commit -m "Propose reviewed FFDD $tag update"
+            git push origin "HEAD:refs/heads/$branch"
+          fi
+          title="Review FFDD $tag update"
+          existing=$(gh issue list --state all --search "$title in:title" --json number,title \
+            --jq '.[] | select(.title == "'"$title"'") | .number' | head -n 1)
+          if [ -n "$existing" ]; then
+            echo "Already notified in issue #$existing"
+            exit 0
+          fi
+          compare="https://github.com/$GH_REPO/compare/$DEFAULT_BRANCH...$branch?expand=1"
+          body=$(printf 'New official FFDD tag: %s.\n\nPR-ready branch: `%s`\nOpen and review PR: %s\n\nCheck upstream OpenWrt revision, device patches/config, then manually run Build experimental DD device firmware on the PR ref. No auto-merge, build or GitHub Release occurs here.\n' "$tag" "$branch" "$compare")
+          gh issue create --title "$title" --body "$body"

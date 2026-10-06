@@ -1,0 +1,7 @@
+{
+  "repository": "https://gitlab.freifunk-dresden.de/firmware-developer/firmware.git",
+  "version": "9.1.0",
+  "tag": "T_FIRMWARE_9.1.0",
+  "tag_object_sha": "beb67552cb80da220b7d5fdad783292b933fc114",
+  "commit_sha": "b669654ab7dbe18de3c0793642609c685f18ab6c"
+}

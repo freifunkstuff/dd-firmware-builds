@@ -1,0 +1,248 @@
+From 9139db725c0e41ceb305b1abcdd1981f82e86ed3 Mon Sep 17 00:00:00 2001
+From: Paul Maruhn <paulmaruhn@posteo.de>
+Date: Sun, 20 Sep 2026 19:45:10 +0200
+Subject: [PATCH 1/2] ath79: refactor eap225-outdoor-v3.dts for resuse
+
+Move dts file for the eap225-outdoor-v3 to its own .dtsi
+to reuse it for the identical f52-outdoor-v1.
+
+Signed-off-by: Paul Maruhn <paulmaruhn@posteo.de>
+---
+ .../dts/qca9563_tplink_eap225-outdoor-v3.dts  | 61 +-----------------
+ .../dts/qca9563_tplink_eap225-outdoor-v3.dtsi | 64 +++++++++++++++++++
+ 2 files changed, 65 insertions(+), 60 deletions(-)
+ create mode 100644 target/linux/ath79/dts/qca9563_tplink_eap225-outdoor-v3.dtsi
+
+diff --git a/target/linux/ath79/dts/qca9563_tplink_eap225-outdoor-v3.dts b/target/linux/ath79/dts/qca9563_tplink_eap225-outdoor-v3.dts
+index 916d30d3..69d01c10 100644
+--- a/target/linux/ath79/dts/qca9563_tplink_eap225-outdoor-v3.dts
++++ b/target/linux/ath79/dts/qca9563_tplink_eap225-outdoor-v3.dts
+@@ -1,67 +1,8 @@
+ // SPDX-License-Identifier: GPL-2.0-or-later OR MIT
+ 
+-#include <dt-bindings/leds/common.h>
+-
+-#include "qca9563_tplink_eap2x5-1port.dtsi"
++#include "qca9563_tplink_eap225-outdoor-v3.dtsi"
+ 
+ / {
+ 	compatible = "tplink,eap225-outdoor-v3", "qca,qca9563";
+ 	model = "TP-Link EAP225-Outdoor v3";
+-
+-	aliases {
+-		led-boot = &led_status_green;
+-		led-failsafe = &led_status_amber;
+-		led-running = &led_status_green;
+-		led-upgrade = &led_status_amber;
+-	};
+-
+-	leds {
+-		compatible = "gpio-leds";
+-
+-		led_status_green: status_green {
+-			function = LED_FUNCTION_STATUS;
+-			color = <LED_COLOR_ID_GREEN>;
+-			gpios = <&gpio 7 GPIO_ACTIVE_LOW>;
+-			default-state = "on";
+-		};
+-
+-		led_status_amber: status_amber {
+-			function = LED_FUNCTION_STATUS;
+-			color = <LED_COLOR_ID_AMBER>;
+-			gpios = <&gpio 9 GPIO_ACTIVE_LOW>;
+-		};
+-	};
+-};
+-
+-&art {
+-	nvmem-layout {
+-		compatible = "fixed-layout";
+-		#address-cells = <1>;
+-		#size-cells = <1>;
+-
+-		precalibration_ath10k: pre-calibration@5000 {
+-			reg = <0x5000 0x2f20>;
+-		};
+-	};
+-};
+-
+-&eth0 {
+-	phy-handle = <&phy6>;
+-	phy-mode = "sgmii";
+-};
+-
+-&mdio0 {
+-	phy6: ethernet-phy@6 {
+-		reg = <6>;
+-	};
+-};
+-
+-&pcie {
+-	wifi@0,0 {
+-		compatible = "qcom,ath10k";
+-		reg = <0 0 0 0 0>;
+-
+-		nvmem-cells = <&macaddr_info_8 1>, <&precalibration_ath10k>;
+-		nvmem-cell-names = "mac-address", "pre-calibration";
+-	};
+ };
+diff --git a/target/linux/ath79/dts/qca9563_tplink_eap225-outdoor-v3.dtsi b/target/linux/ath79/dts/qca9563_tplink_eap225-outdoor-v3.dtsi
+new file mode 100644
+index 00000000..6850f4e5
+--- /dev/null
++++ b/target/linux/ath79/dts/qca9563_tplink_eap225-outdoor-v3.dtsi
+@@ -0,0 +1,64 @@
++// SPDX-License-Identifier: GPL-2.0-or-later OR MIT
++
++#include <dt-bindings/leds/common.h>
++
++#include "qca9563_tplink_eap2x5-1port.dtsi"
++
++/ {
++	aliases {
++		led-boot = &led_status_green;
++		led-failsafe = &led_status_amber;
++		led-running = &led_status_green;
++		led-upgrade = &led_status_amber;
++	};
++
++	leds {
++		compatible = "gpio-leds";
++
++		led_status_green: status_green {
++			function = LED_FUNCTION_STATUS;
++			color = <LED_COLOR_ID_GREEN>;
++			gpios = <&gpio 7 GPIO_ACTIVE_LOW>;
++			default-state = "on";
++		};
++
++		led_status_amber: status_amber {
++			function = LED_FUNCTION_STATUS;
++			color = <LED_COLOR_ID_AMBER>;
++			gpios = <&gpio 9 GPIO_ACTIVE_LOW>;
++		};
++	};
++};
++
++&art {
++	nvmem-layout {
++		compatible = "fixed-layout";
++		#address-cells = <1>;
++		#size-cells = <1>;
++
++		precalibration_ath10k: pre-calibration@5000 {
++			reg = <0x5000 0x2f20>;
++		};
++	};
++};
++
++&eth0 {
++	phy-handle = <&phy6>;
++	phy-mode = "sgmii";
++};
++
++&mdio0 {
++	phy6: ethernet-phy@6 {
++		reg = <6>;
++	};
++};
++
++&pcie {
++	wifi@0,0 {
++		compatible = "qcom,ath10k";
++		reg = <0 0 0 0 0>;
++
++		nvmem-cells = <&macaddr_info_8 1>, <&precalibration_ath10k>;
++		nvmem-cell-names = "mac-address", "pre-calibration";
++	};
++};
+-- 
+2.55.0
+
+
+From ca6f69be0cf94b82a7c0a7999d241363b41ca627 Mon Sep 17 00:00:00 2001
+From: Paul Maruhn <paulmaruhn@posteo.de>
+Date: Sun, 20 Sep 2026 19:52:51 +0200
+Subject: [PATCH 2/2] ath79: support for TP-Link Festa F52-Outdoor v1
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The TP-Link Festa F52-Outdoor v1 consists of the same
+hardware as the TP-Link EAP225-Outdoor v3. Only the
+device identifiers differ.
+
+Device specifications:
+* SoC: QCA9563 @ 775MHz
+* Memory: 128MiB DDR2
+* Flash: 16MiB SPI-NOR
+* Wireless 2.4GHz (SoC): b/g/n 2x2
+* Wireless 5GHz (QCA9886): a/n/ac 2x2 MU-MIMO
+* Ethernet (RTL8211FS): 1× 1GbE, PoE
+
+Flashing instructions:
+Can be flashed via WebUI:
+* Enable ssh via vendor WebUI
+* ssh into target device
+* run `cliclientd stopcs` on target device
+* upload factory image via web interface
+
+Signed-off-by: Paul Maruhn <paulmaruhn@posteo.de>
+---
+ .../linux/ath79/dts/qca9563_tplink_f52-outdoor-v1.dts |  8 ++++++++
+ .../ath79/generic/base-files/etc/board.d/02_network   |  1 +
+ target/linux/ath79/image/generic-tp-link.mk           | 11 +++++++++++
+ 3 files changed, 20 insertions(+)
+ create mode 100644 target/linux/ath79/dts/qca9563_tplink_f52-outdoor-v1.dts
+
+diff --git a/target/linux/ath79/dts/qca9563_tplink_f52-outdoor-v1.dts b/target/linux/ath79/dts/qca9563_tplink_f52-outdoor-v1.dts
+new file mode 100644
+index 00000000..0ae1a601
+--- /dev/null
++++ b/target/linux/ath79/dts/qca9563_tplink_f52-outdoor-v1.dts
+@@ -0,0 +1,8 @@
++// SPDX-License-Identifier: GPL-2.0-or-later OR MIT
++
++#include "qca9563_tplink_eap225-outdoor-v3.dtsi"
++
++/ {
++	compatible = "tplink,f52-outdoor-v1", "qca,qca9563";
++	model = "TP-Link F52-Outdoor v1";
++};
+diff --git a/target/linux/ath79/generic/base-files/etc/board.d/02_network b/target/linux/ath79/generic/base-files/etc/board.d/02_network
+index 9a3527cb..aa2d3e3e 100644
+--- a/target/linux/ath79/generic/base-files/etc/board.d/02_network
++++ b/target/linux/ath79/generic/base-files/etc/board.d/02_network
+@@ -98,6 +98,7 @@ ath79_setup_interfaces()
+ 	tplink,eap225-v3|\
+ 	tplink,eap225-v4|\
+ 	tplink,eap245-v1|\
++	tplink,f52-outdoor-v1|\
+ 	tplink,re350k-v1|\
+ 	tplink,re450-v3|\
+ 	tplink,re455-v1|\
+diff --git a/target/linux/ath79/image/generic-tp-link.mk b/target/linux/ath79/image/generic-tp-link.mk
+index affc4f65..0278c229 100644
+--- a/target/linux/ath79/image/generic-tp-link.mk
++++ b/target/linux/ath79/image/generic-tp-link.mk
+@@ -509,6 +509,17 @@ define Device/tplink_eap245-v3
+ endef
+ TARGET_DEVICES += tplink_eap245-v3
+ 
++define Device/tplink_f52-outdoor-v1
++  $(Device/tplink-eap2x5)
++  SOC := qca9563
++  IMAGE_SIZE := 13824k
++  DEVICE_MODEL := F52-Outdoor
++  DEVICE_VARIANT := v1
++  DEVICE_PACKAGES := kmod-ath10k-ct ath10k-firmware-qca9888-ct
++  TPLINK_BOARD_ID := F52-V1
++endef
++TARGET_DEVICES += tplink_f52-outdoor-v1
++
+ define Device/tplink_deco-m4r-v1
+   $(Device/tplink-safeloader-uimage)
+   SOC := qca9563
+-- 
+2.55.0
+

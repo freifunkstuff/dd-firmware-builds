@@ -1,0 +1,24 @@
+{
+  "id": "f52-outdoor-v1",
+  "revision": 1,
+  "dd_target": "ath79.25.generic",
+  "openwrt_device": "tplink_f52-outdoor-v1",
+  "openwrt_platform": "ath79_generic",
+  "compatible": "tplink,f52-outdoor-v1",
+  "patches": "patches/f52",
+  "rootfs": "squashfs",
+  "image_format": "tplink-safeloader",
+  "expected_openwrt_rev": "v25.12.4",
+  "expected_selector": "25.12",
+  "factory_support_list": "Festa F52-Outdoor(TP-Link|UN|AC1200-D):1.0",
+  "factory_compat_level": 2,
+  "firmware_start": 262144,
+  "firmware_end": 14417920,
+  "required_rootfs_paths": [
+    "lib/modules/*/ath10k_core.ko",
+    "lib/modules/*/ath10k_pci.ko",
+    "lib/firmware/ath10k/QCA9888/hw2.0/firmware-5.bin",
+    "usr/bin/bmxd",
+    "usr/lib/ddmesh/ddmesh-bootconfig.sh"
+  ]
+}
