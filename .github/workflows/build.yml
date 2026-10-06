@@ -100,22 +100,27 @@ jobs:
           echo "target=$target" >> "$GITHUB_OUTPUT"
           (cd source && ./build.sh devices "$target")
 
-      - name: Build with public CI placeholders only
+      - name: Build with Dresden GitHub repository settings
         id: compile
         shell: bash
         env:
           TARGET: ${{ steps.prepare.outputs.target }}
+          FF_MESH_KEY: ${{ secrets.FF_MESH_KEY }}
+          FF_REGISTERKEY_PREFIX: ${{ secrets.FF_REGISTERKEY_PREFIX }}
         run: |
           set -euo pipefail
-          if [ -n "${FF_MESH_KEY:-}" ] || [ -n "${FF_REGISTERKEY_PREFIX:-}" ]; then
-            echo 'Refusing to expose production FFDD credentials in public CI artifacts.' >&2
+          if [ -z "${FF_MESH_KEY:-}" ] || [ -z "${FF_REGISTERKEY_PREFIX:-}" ]; then
+            echo 'Required FFDD build parameters are not configured.' >&2
             exit 1
           fi
+          echo "::add-mask::${FF_REGISTERKEY_PREFIX//_/:}"
           (cd source && ./build.sh "$TARGET" -- -j2 V=s) > build.log 2>&1 || {
-            tail -n 110 build.log
+            python3 scripts/redact_log.py build.log build-redacted.log
+            tail -n 110 build-redacted.log
             exit 1
           }
           if ! grep -q 'make ret: 0' build.log; then
+            python3 scripts/redact_log.py build.log build-redacted.log
             echo 'DD builder did not confirm a successful make' >&2
             exit 1
           fi
@@ -125,6 +130,8 @@ jobs:
         shell: bash
         env:
           DEVICE: ${{ matrix.device }}
+          FF_MESH_KEY: ${{ secrets.FF_MESH_KEY }}
+          FF_REGISTERKEY_PREFIX: ${{ secrets.FF_REGISTERKEY_PREFIX }}
         run: |
           set -euo pipefail
           python3 scripts/verify_images.py --source source --device "$DEVICE" --out dist/"$DEVICE"
@@ -138,11 +145,11 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      - name: Upload diagnostic log on failure, without credentials
+      - name: Upload redacted diagnostic log on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: dd-build-log-${{ matrix.device }}-${{ github.run_number }}
-          path: build.log
+          path: build-redacted.log
           if-no-files-found: ignore
           retention-days: 3

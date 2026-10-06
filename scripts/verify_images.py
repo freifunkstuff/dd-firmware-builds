@@ -10,6 +10,7 @@ import fnmatch
 import hashlib
 import json
 import lzma
+import os
 from pathlib import Path
 import re
 import shutil
@@ -53,13 +54,16 @@ def parse_build_marker(text: str) -> dict[str, str]:
     return result
 
 
-def check_public_credentials(text: str) -> None:
-    """Check exact, unique UCI values; substring matching would leak keys."""
+def check_embedded_credentials(text: str, expected_mesh: str, register_prefix: str) -> None:
+    """Require exact, unique UCI values without logging either value."""
+    if not expected_mesh or not register_prefix:
+        raise ValueError('missing DD build parameters')
     mesh = re.findall(r"^\s*option\s+wifi_mesh_key\s+'([^']*)'\s*$", text, re.M)
     registration = re.findall(r"^\s*option\s+register_service_url\s+'([^']*)'\s*$", text, re.M)
-    expected_url = 'https://selfsigned.register.freifunk-dresden.de/bot.php?registerkey='
-    if mesh != ['custom-firmware-key'] or registration != [expected_url]:
-        raise ValueError('unreviewed, duplicate or real DD credentials: REFUSE public artifact upload')
+    expected_url = ('https://selfsigned.register.freifunk-dresden.de/bot.php?registerkey='
+                    + register_prefix.replace('_', ':'))
+    if mesh != [expected_mesh] or registration != [expected_url]:
+        raise ValueError('ambiguous or mismatched DD build parameters in rootfs')
 
 
 def check_consistent_images(kernel: bytes, factory_root: bytes, upgrade: bytes) -> int:
@@ -93,6 +97,10 @@ def verify(source: Path, device: dict, lock: dict, out: Path) -> dict:
         raise ValueError(f'output destination must be empty: {out}')
     if device.get('image_format') != 'tplink-safeloader':
         raise ValueError('no reviewed verifier for this device image format; add one before publishing')
+    mesh_key = os.environ.get('FF_MESH_KEY')
+    registration_prefix = os.environ.get('FF_REGISTERKEY_PREFIX')
+    if not mesh_key or not registration_prefix:
+        raise ValueError('DD build parameters must be provided for this image verification')
     target = f"{device['dd_target']}.{device['id']}"
     root = source / 'workdir' / '_output' / target / 'images'
     factory = get_release_file(root, device, 'factory')
@@ -167,7 +175,7 @@ def verify(source: Path, device: dict, lock: dict, out: Path) -> dict:
         }
         if version != lock['version'] or parse_build_marker(marker) != expected_marker:
             raise ValueError('DD version or device ID/revision/source commit in rootfs differs from reviewed lock')
-        check_public_credentials(credentials)
+        check_embedded_credentials(credentials, mesh_key, registration_prefix)
         metadata = temp / 'upgrade.json'
         run(str(fwtool), '-i', str(metadata), str(upgrade))
         info = json.loads(metadata.read_text())
@@ -190,7 +198,7 @@ def verify(source: Path, device: dict, lock: dict, out: Path) -> dict:
         'device_revision': device['revision'], 'device': device['id'],
         'dd_tag': lock['tag'], 'dd_tag_object_sha': lock['tag_object_sha'],
         'dd_commit': lock['commit_sha'],
-        'config': 'public CI placeholders; not registered with Dresden network',
+        'build_parameters': 'matched configured GitHub Actions repository inputs; values omitted from report',
         'factory_support_list': device['factory_support_list'],
         'factory_compat_level': device['factory_compat_level'],
         'firmware_partition': {'start': firmware_start, 'end': firmware_end},

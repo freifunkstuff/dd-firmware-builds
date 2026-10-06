@@ -1,6 +1,6 @@
 {
   "id": "f52-outdoor-v1",
-  "revision": 1,
+  "revision": 2,
   "dd_target": "ath79.25.generic",
   "openwrt_device": "tplink_f52-outdoor-v1",
   "openwrt_platform": "ath79_generic",
