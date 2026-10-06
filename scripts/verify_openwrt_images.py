@@ -7,6 +7,7 @@ import json
 import lzma
 from pathlib import Path
 import re
+import shlex
 import shutil
 import struct
 import subprocess
@@ -45,6 +46,51 @@ def check_mips_elf32(kernel: bytes) -> int:
     if not entry_covered:
         raise ValueError('ELF entry not covered by a valid RAM PT_LOAD')
     return entry
+
+
+def parse_uci(text: str) -> dict[tuple[str, str], dict[str, list[str]]]:
+    sections = {}
+    current = None
+    for raw in text.splitlines():
+        parts = shlex.split(raw, comments=True)
+        if not parts:
+            continue
+        if parts[0] == 'config' and len(parts) in (2, 3):
+            current = (parts[1], parts[2] if len(parts) == 3 else f'@{parts[1]}[{len(sections)}]')
+            if current in sections:
+                raise ValueError(f'duplicate UCI section {current}')
+            sections[current] = {}
+        elif parts[0] in ('option', 'list') and len(parts) == 3 and current:
+            sections[current].setdefault(parts[1], []).append(parts[2])
+        else:
+            raise ValueError(f'unexpected UCI syntax in AP rootfs: {parts[:2]}')
+    return sections
+
+
+def check_ap_network(network: str, dhcp: str, defaults_script: str) -> None:
+    lan = parse_uci(network)
+    bridge = lan.get(('device', 'br_lan'), {})
+    interface = lan.get(('interface', 'lan'), {})
+    if (bridge.get('name') != ['br-lan'] or bridge.get('type') != ['bridge'] or
+            bridge.get('ports') != ['eth0'] or interface.get('device') != ['br-lan'] or
+            interface.get('proto') != ['dhcp'] or any(key in interface for key in
+                                             ('ipaddr', 'netmask', 'gateway', 'ip6assign'))):
+        raise ValueError('F52 bridge or Ethernet management is not first-boot DHCP client')
+    if any(kind == 'interface' and name not in ('loopback', 'lan') for kind, name in lan):
+        raise ValueError('unexpected WAN/router interface in F52 AP overlay')
+    services = parse_uci(dhcp)
+    dhcp_lan = services.get(('dhcp', 'lan'), {})
+    if any(dhcp_lan.get(k) != [v] for k, v in {
+            'interface': 'lan', 'ignore': '1', 'dhcpv4': 'disabled',
+            'dhcpv6': 'disabled', 'ra': 'disabled', 'ndp': 'disabled'}.items()):
+        raise ValueError('LAN DHCP/RA/NDP servers are not disabled in initial rootfs')
+    odhcpd = services.get(('odhcpd', 'odhcpd'), {})
+    if odhcpd.get('maindhcp') != ['0']:
+        raise ValueError('missing odhcpd section; vendor defaults can reactivate LAN services')
+    for required in ("network.lan.proto='dhcp'", "dhcp.lan.ignore='1'",
+                     "dhcp.lan.ra='disabled'", "uhttpd.main.redirect_https='1'"):
+        if required not in defaults_script:
+            raise ValueError(f'missing first-boot/upgraded AP-safe default: {required}')
 
 
 def verify(source: Path, out: Path) -> dict:
@@ -140,9 +186,15 @@ def verify(source: Path, out: Path) -> dict:
         marker = run('unsquashfs', '-cat', str(root), 'etc/device-build')
         expected_label = f"openwrt-snapshot-{lock['commit_sha'][:8]}-{device['id']}-r{device['revision']}"
         expected_marker = {f'version={expected_label}', f'openwrt_commit={lock["commit_sha"]}',
-                           f'firmware_utils_pr_commit={lock["firmware_utils_commit_sha"]}'}
-        if set(marker.splitlines()) != expected_marker or len(marker.splitlines()) != 3:
-            raise ValueError('image build revision or pinned PR provenance marker differs')
+                           f'firmware_utils_pr_commit={lock["firmware_utils_commit_sha"]}',
+                           f'luci_feed_commit={lock["luci_feed_commit_sha"]}'}
+        if set(marker.splitlines()) != expected_marker or len(marker.splitlines()) != 4:
+            raise ValueError('image build revision, feed or pinned PR provenance marker differs')
+        check_ap_network(
+            run('unsquashfs', '-cat', str(root), 'etc/config/network'),
+            run('unsquashfs', '-cat', str(root), 'etc/config/dhcp'),
+            run('unsquashfs', '-cat', str(root), 'etc/uci-defaults/90-f52-ap-client-r2'),
+        )
         metadata = temp / 'upgrade.json'
         run(str(fwtool), '-i', str(metadata), str(upgrade))
         upgrade_info = json.loads(metadata.read_text())
@@ -175,6 +227,8 @@ def verify(source: Path, out: Path) -> dict:
               'openwrt_revision': rev.group(1), 'openwrt_commit': lock['commit_sha'],
               'openwrt_pr': lock['pull_request'], 'firmware_utils_pr': lock['firmware_utils_pull_request'],
               'firmware_utils_commit': lock['firmware_utils_commit_sha'],
+              'luci_feed_commit': lock['luci_feed_commit_sha'],
+              'lan_mode': 'dhcp-client-only; no DHCPv4/DHCPv6/RA server; LuCI SSL',
               'device_revision': device['revision'], 'factory_support_list': device['factory_support_list'],
               'squashfs_used_bytes': used, 'firmware_region_start': start, 'firmware_region_end': end,
               'files': files}

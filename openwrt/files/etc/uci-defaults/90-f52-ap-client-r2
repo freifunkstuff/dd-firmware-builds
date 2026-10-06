@@ -1,0 +1,27 @@
+#!/bin/sh
+# Reassert AP-safe defaults after first boot or an upgrade that kept old UCI
+# configuration. Boot START=10 runs UCI defaults before dnsmasq START=19,
+# network START=20 and odhcpd START=35.
+uci -q set network.lan.device='br-lan'
+uci -q set network.lan.proto='dhcp'
+uci -q delete network.lan.ipaddr
+uci -q delete network.lan.netmask
+uci -q delete network.lan.gateway
+uci -q delete network.lan.dns
+uci -q delete network.lan.ip6assign
+uci commit network
+
+uci -q set dhcp.lan='dhcp'
+uci -q set dhcp.lan.interface='lan'
+uci -q set dhcp.lan.ignore='1'
+uci -q set dhcp.lan.dhcpv4='disabled'
+uci -q set dhcp.lan.dhcpv6='disabled'
+uci -q set dhcp.lan.ra='disabled'
+uci -q set dhcp.lan.ndp='disabled'
+uci -q set dhcp.odhcpd='odhcpd'
+uci -q set dhcp.odhcpd.maindhcp='0'
+uci commit dhcp
+
+uci -q set uhttpd.main.redirect_https='1'
+uci commit uhttpd
+exit 0

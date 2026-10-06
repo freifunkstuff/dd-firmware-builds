@@ -6,7 +6,7 @@ import sys
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
-from verify_openwrt_images import check_mips_elf32
+from verify_openwrt_images import check_ap_network, check_mips_elf32
 
 
 def fake_elf() -> bytearray:
@@ -31,6 +31,19 @@ class ElfTests(unittest.TestCase):
         wrong_addr[52 + 12:52 + 16] = struct.pack('>I', 0x89000000)
         with self.assertRaisesRegex(ValueError, 'outside F52'):
             check_mips_elf32(wrong_addr)
+
+    def test_first_boot_never_serves_lan_dhcp_or_ra(self):
+        root = Path(__file__).resolve().parents[1] / 'openwrt/files/etc'
+        network = (root / 'config/network').read_text()
+        dhcp = (root / 'config/dhcp').read_text()
+        uci = (root / 'uci-defaults/90-f52-ap-client-r2').read_text()
+        check_ap_network(network, dhcp, uci)
+        with self.assertRaisesRegex(ValueError, 'DHCP/RA'):
+            check_ap_network(network, dhcp.replace("option ra 'disabled'", "option ra 'server'"), uci)
+        with self.assertRaisesRegex(ValueError, 'DHCP client'):
+            check_ap_network(network.replace("option proto 'dhcp'", "option proto 'static'"), dhcp, uci)
+        with self.assertRaisesRegex(ValueError, 'missing odhcpd'):
+            check_ap_network(network, dhcp.replace("option maindhcp '0'", "option maindhcp '1'"), uci)
 
 
 if __name__ == '__main__':

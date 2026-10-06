@@ -1,0 +1,19 @@
+# F52-Outdoor v1: Ethernet is the sole bridge/uplink and management DHCP client.
+# There is deliberately no 192.168.1.1 fallback and no WAN/NAT interface.
+config interface 'loopback'
+	option device 'lo'
+	option proto 'static'
+	list ipaddr '127.0.0.1/8'
+
+config globals 'globals'
+	option ula_prefix 'auto'
+	option dhcp_default_duid 'auto'
+
+config device 'br_lan'
+	option name 'br-lan'
+	option type 'bridge'
+	list ports 'eth0'
+
+config interface 'lan'
+	option device 'br-lan'
+	option proto 'dhcp'

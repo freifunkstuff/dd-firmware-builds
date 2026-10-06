@@ -1,6 +1,6 @@
 {
   "id": "f52-outdoor-v1",
-  "revision": 1,
+  "revision": 2,
   "openwrt_device": "tplink_f52-outdoor-v1",
   "compatible": "tplink,f52-outdoor-v1",
   "image_format": "tplink-safeloader",
@@ -11,6 +11,10 @@
   "required_rootfs_paths": [
     "lib/modules/*/ath10k_core.ko",
     "lib/modules/*/ath10k_pci.ko",
-    "lib/firmware/ath10k/QCA9888/hw2.0/firmware-5.bin"
+    "lib/firmware/ath10k/QCA9888/hw2.0/firmware-5.bin",
+    "usr/sbin/uhttpd",
+    "www/index.html",
+    "etc/config/network",
+    "etc/config/dhcp"
   ]
 }
