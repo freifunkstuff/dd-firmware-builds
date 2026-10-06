@@ -2,6 +2,11 @@ name: Publish firmware download page
 
 on:
   workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish page (false builds a preview only)
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -23,6 +28,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Refuse publishing broken firmware download links
+        if: ${{ inputs.publish }}
         run: |
           python3 - <<'PY'
           from pathlib import Path
@@ -47,4 +53,5 @@ jobs:
         with:
           path: ./_site
       - id: deploy
+        if: ${{ inputs.publish }}
         uses: actions/deploy-pages@v4
